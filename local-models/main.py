@@ -7,8 +7,11 @@ import time
 import os
 import tempfile
 
-VIDEO_PATH = "videos/test2.mp4"
-BLOCK_DURATION = 30  # seconds per block
+SIZE_TO_TOKENS = {
+    "short": 200,
+    "medium": 700,
+    "large": 1600
+}
 
 def initialize_models():
     print("Loading models...")
@@ -50,7 +53,7 @@ def transcribe_block(whisper_model, video_path, start_time, end_time):
     return text.strip()
 
 
-def summarize_text_llama(ollama_client, text, language="auto-detect", size="short", persona="Expert", extra_prompts="", max_tokens=200):
+def summarize_text_llama(ollama_client, text, language="auto-detect", size="short", persona="Expert", extra_prompts=""):
     if not text.strip():
         return "[No speech detected in this block]"
     
@@ -70,7 +73,7 @@ def summarize_text_llama(ollama_client, text, language="auto-detect", size="shor
         ollama_client,
         messages=[{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': text}],
         options={
-            "num_predict": max_tokens,
+            "num_predict": SIZE_TO_TOKENS.get(size, 500),
             "temperature": 0.1,
             "top_p": 0.9,
             "top_k": 10,
@@ -117,8 +120,7 @@ def create_blocks(video_path, block_duration, whisper_model, blip_processor, bli
         # Summary
         summary = summarize_text_llama(
             ollama_client, 
-            f"Transcription: {block_text}\nVisual description: {frame_description}",
-            max_tokens=600
+            f"Transcription: {block_text}\nVisual description: {frame_description}"
         )
         print(f"📝 Block {i+1} summary:")
         print(summary)
@@ -135,7 +137,7 @@ def create_blocks(video_path, block_duration, whisper_model, blip_processor, bli
     return blocks
 
 
-def final_video_summary(blocks, ollama_client):
+def final_video_summary(blocks, ollama_client, language, persona, size, extra_prompts):
     combined_texts = []
     for block in blocks:
         text = f"Audio summary: {block['audio_summary']}\n" \
@@ -146,23 +148,37 @@ def final_video_summary(blocks, ollama_client):
     final_summary = summarize_text_llama(
         ollama_client,
         text=full_text,
-        language="english",
-        persona="Persuasive",
-        size="medium",
-        extra_prompts="Present as a list of key points",
-        max_tokens=500
+        language=language,
+        persona=persona,
+        size=size,
+        extra_prompts=extra_prompts,
     )
     return final_summary
 
 
 if __name__ == "__main__":
+    VIDEO_PATH = ""
+
+    from utils.download_url import download
+    
+    if VIDEO_PATH.startswith("http://") or VIDEO_PATH.startswith("https://"):
+        VIDEO_PATH = download(VIDEO_PATH)
+
+
+    BLOCK_DURATION = 30  # seconds per block
+
+    LANGUAGE = "portuguese"
+    SIZE = "large"  # options: short, medium, large
+    PERSONA = "Funny"
+    EXTRA_PROMPTS = "Faça o resumo em topicos pontos chaves"
+
     start_total = time.time()
 
     whisper_model, blip_processor, blip_model, ollama_client = initialize_models()
     blocks = create_blocks(VIDEO_PATH, BLOCK_DURATION, whisper_model, blip_processor, blip_model, ollama_client)
 
     print("\n=== FINAL VIDEO SUMMARY ===")
-    summary = final_video_summary(blocks, ollama_client)
+    summary = final_video_summary(blocks, ollama_client, LANGUAGE, SIZE, PERSONA, EXTRA_PROMPTS)
     print(summary)
 
     end_total = time.time()

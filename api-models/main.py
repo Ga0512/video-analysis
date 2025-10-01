@@ -7,13 +7,19 @@ import os
 from google import genai
 from google.genai import types
 import io
+from dotenv import load_dotenv
 
-client_gemini = genai.Client(api_key="")
-client = Groq(api_key="")
+# Carrega as variáveis do .env
+load_dotenv()
 
-VIDEO_PATH = "videos/test2.mp4"
-BLOCK_DURATION = 30  # seconds per block
+client_gemini = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
+SIZE_TO_TOKENS = {
+    "short": 200,
+    "medium": 700,
+    "large": 1600
+}
 
 def get_video_info(video_path):
     video = cv2.VideoCapture(video_path)
@@ -50,7 +56,7 @@ def transcribe_block(video_path, start_time, end_time, whisper_model="whisper-la
     return transcription.text.strip()
 
 
-def summarize_text_llama(text, language="auto-detect", size="short", persona="Expert", extra_prompt="", model="openai/gpt-oss-120b", max_tokens=100):
+def summarize_text_llama(text, language="auto-detect", size="short", persona="Expert", extra_prompt="", model="openai/gpt-oss-120b"):
     if not text.strip():
         return "[No speech detected in this block]"
 
@@ -73,7 +79,7 @@ def summarize_text_llama(text, language="auto-detect", size="short", persona="Ex
             {"role": "user", "content": text}
         ],
         model=model,
-        max_tokens=max_tokens,
+        max_tokens=SIZE_TO_TOKENS.get(size, 500),
         temperature=0.1,
         top_p=0.9
     )
@@ -131,8 +137,7 @@ def create_blocks(video_path, block_duration):
 
         # Summary
         summary = summarize_text_llama(
-            f"Transcription: {block_text}\nVisual description: {frame_description}",
-            max_tokens=500
+            f"Transcription: {block_text}\nVisual description: {frame_description}"
         )
         print(f"📝 Block {i+1} summary:")
         print(summary)
@@ -149,7 +154,7 @@ def create_blocks(video_path, block_duration):
     return blocks
 
 
-def final_video_summary(blocks):
+def final_video_summary(blocks, language, persona, size, extra_prompts):
     combined_texts = []
     for i, block in enumerate(blocks):
         text = f"Block {i+1} ({block['start_time']:.1f}s-{block['end_time']:.1f}s):\n" \
@@ -160,22 +165,38 @@ def final_video_summary(blocks):
     full_text = "\n".join(combined_texts)
     final_summary = summarize_text_llama(
         full_text,
-        language='english',
+        language=language,
         size="medium",
-        persona='Persuasive',
-        extra_prompt="Present as a list of key points",
-        max_tokens=500
+        persona=persona,
+        extra_prompt=extra_prompts,
     )
     return final_summary
 
 
 if __name__ == "__main__":
+    from utils.download_url import download
+
+    VIDEO_PATH = ""
+    
+    # Verifica se é URL ou arquivo local
+    if VIDEO_PATH.startswith("http://") or VIDEO_PATH.startswith("https://"):
+        VIDEO_PATH = download(VIDEO_PATH)
+
+
+
+    BLOCK_DURATION = 30  # seconds per block
+
+    LANGUAGE = "portuguese"
+    SIZE = "large"  # options: short, medium, large
+    PERSONA = "Expert"
+    EXTRA_PROMPTS = "Faça o resumo em topicos pontos chaves"
+
     start_total = time.time()
 
     blocks = create_blocks(VIDEO_PATH, BLOCK_DURATION)
 
     print("\n=== FINAL VIDEO SUMMARY ===")
-    summary = final_video_summary(blocks)
+    summary = final_video_summary(blocks, LANGUAGE, SIZE, PERSONA, EXTRA_PROMPTS)
     print(summary)
 
     end_total = time.time()
