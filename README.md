@@ -2,6 +2,10 @@
 
 > Extract **transcriptions**, **visual descriptions**, and **smart summaries** from videos. Run **100% locally** (Whisper + BLIP + Ollama) or via **APIs** (Groq + Gemini). Designed for **long clips**, **block-by-block summaries**, and a customizable **final overview**.
 
+**✨ Join the waitlist to get early access!**
+👉 [**Join the Waitlist Here**](https://iaap4qo6zs2.typeform.com/to/J43jclr2)
+
+
 ## ✨ Features
 
 - 🎙️ **Audio transcription** in blocks (FFmpeg + local Whisper or Groq Whisper).
