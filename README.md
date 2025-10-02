@@ -34,47 +34,6 @@ video-analysis/
 
 ---
 
-## 🧩 How it works (overview)
-
-### Pipeline (Local mode)
-
-```mermaid
-flowchart LR
-    A[Video (file/URL)] -->|FFmpeg (block cut)| B[audio.wav]
-    B --> C[Whisper (faster-whisper)]
-    A -->|OpenCV grabs middle frame| D[Frame PNG]
-    D --> E[BLIP (Hugging Face)]
-    C --> F[Multimodal prompt]
-    E --> F[Multimodal prompt]
-    F --> G[Ollama (local LLM)]
-    G --> H[Block summary]
-    H --> I[Aggregator]
-    I --> J[Final video summary]
-```
-
-### Pipeline (API mode)
-
-```mermaid
-flowchart LR
-    A[Video (file/URL)] -->|FFmpeg (block cut)| B[audio.wav]
-    B --> C[Groq Whisper]
-    A -->|OpenCV grabs middle frame| D[Frame PNG]
-    D --> E[Gemini 2.0 Flash (vision)]
-    C --> F[Multimodal prompt]
-    E --> F[Multimodal prompt]
-    F --> G[Groq Chat Completions]
-    G --> H[Block summary]
-    H --> I[Aggregator]
-    I --> J[Final video summary]
-```
-
-Key parameters:
-- `BLOCK_DURATION` — block size in seconds.
-- `LANGUAGE`, `SIZE` (`short|medium|large`), `PERSONA`, `EXTRA_PROMPTS`.
-- `SIZE_TO_TOKENS` maps summary size to **max tokens**.
-
----
-
 ## 🔧 Requirements
 
 ### Common
