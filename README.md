@@ -104,7 +104,7 @@ EXTRA_PROMPTS = "Write the summary as key bullet points."
 
 **Run (from the repo root):**
 ```bash
-python api-models/main.py
+python -m api-models.main
 ```
 
 > **Important:** run from the **repo root** so `from utils.download_url import download` resolves correctly.
@@ -149,7 +149,7 @@ WhisperModel("medium", device="cuda", compute_type="float16")
 
 **Run (from the repo root):**
 ```bash
-python local-models/main.py
+python -m local-models.main.py "video.mp4" --block_duration 30 --language english --size medium --persona Expert --extra_prompts "Do it in key points"
 ```
 
 ---

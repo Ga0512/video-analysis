@@ -156,29 +156,55 @@ def final_video_summary(blocks, ollama_client, language, persona, size, extra_pr
     return final_summary
 
 
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Video summarizer with Whisper, BLIP and Ollama"
+    )
+    parser.add_argument("video_path", type=str, help="Path or URL to the video file")
+    parser.add_argument("--block_duration", type=int, default=30,
+                        help="Duration (in seconds) of each block")
+    parser.add_argument("--language", type=str, default="portuguese",
+                        help="Language of the final summary (e.g., english, portuguese, auto-detect)")
+    parser.add_argument("--size", type=str, choices=["short", "medium", "large"], default="short",
+                        help="Summary size: short, medium, large")
+    parser.add_argument("--persona", type=str, default="Expert",
+                        help="Persona style for the summary (e.g., Expert, Funny, Journalist)")
+    parser.add_argument("--extra_prompts", type=str, default="",
+                        help="Additional instructions to guide the summary")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    VIDEO_PATH = ""
+    args = parse_args()
 
     from utils.download_url import download
-    
+    VIDEO_PATH = args.video_path
     if VIDEO_PATH.startswith("http://") or VIDEO_PATH.startswith("https://"):
         VIDEO_PATH = download(VIDEO_PATH)
-
-
-    BLOCK_DURATION = 30  # seconds per block
-
-    LANGUAGE = "portuguese"
-    SIZE = "large"  # options: short, medium, large
-    PERSONA = "Funny"
-    EXTRA_PROMPTS = "Faça o resumo em topicos pontos chaves"
 
     start_total = time.time()
 
     whisper_model, blip_processor, blip_model, ollama_client = initialize_models()
-    blocks = create_blocks(VIDEO_PATH, BLOCK_DURATION, whisper_model, blip_processor, blip_model, ollama_client)
+    blocks = create_blocks(
+        VIDEO_PATH,
+        args.block_duration,
+        whisper_model,
+        blip_processor,
+        blip_model,
+        ollama_client
+    )
 
     print("\n=== FINAL VIDEO SUMMARY ===")
-    summary = final_video_summary(blocks, ollama_client, LANGUAGE, SIZE, PERSONA, EXTRA_PROMPTS)
+    summary = final_video_summary(
+        blocks,
+        ollama_client,
+        args.language,
+        args.persona,
+        args.size,
+        args.extra_prompts
+    )
     print(summary)
 
     end_total = time.time()
