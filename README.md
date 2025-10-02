@@ -149,7 +149,7 @@ WhisperModel("medium", device="cuda", compute_type="float16")
 
 **Run (from the repo root):**
 ```bash
-python -m local-models.main.py "video.mp4" --block_duration 30 --language english --size medium --persona Expert --extra_prompts "Do it in key points"
+python -m local-models.main "video.mp4" --block_duration 30 --language english --size medium --persona Expert --extra_prompts "Do it in key points"
 ```
 
 ---
