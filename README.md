@@ -7,6 +7,10 @@
 
 
 
+https://github.com/user-attachments/assets/3fdd39bb-e87d-4366-ab84-7ef9845ce435
+
+
+
 ## ✨ Features
 
 - 🎙️ **Audio transcription** in blocks (FFmpeg + local Whisper or Groq Whisper).
