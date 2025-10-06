@@ -108,7 +108,7 @@ EXTRA_PROMPTS = "Write the summary as key bullet points."
 
 **Run (from the repo root):**
 ```bash
-python -m api-models.main
+python -m api-models.main "video.mp4" --block_duration 30 --language english --size medium --persona Expert --extra_prompts "Do it in key points"
 ```
 
 > **Important:** run from the **repo root** so `from utils.download_url import download` resolves correctly.

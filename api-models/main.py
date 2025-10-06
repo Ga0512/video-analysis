@@ -1,15 +1,16 @@
+import os
+import io
 import cv2
-from PIL import Image
-from groq import Groq
 import time
 import tempfile
-import os
+import subprocess
+from PIL import Image
+from dotenv import load_dotenv
+from datetime import timedelta
+from groq import Groq
 from google import genai
 from google.genai import types
-import io
-from dotenv import load_dotenv
 
-# Carrega as variáveis do .env
 load_dotenv()
 
 client_gemini = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
@@ -21,6 +22,14 @@ SIZE_TO_TOKENS = {
     "large": 1600
 }
 
+
+def format_timestamp(seconds: float) -> str:
+    td = timedelta(seconds=seconds)
+    total_seconds = int(td.total_seconds())
+    millis = int((seconds - total_seconds) * 1000)
+    return str(timedelta(seconds=total_seconds)) + f".{millis:03d}"
+
+
 def get_video_info(video_path):
     video = cv2.VideoCapture(video_path)
     fps = int(video.get(cv2.CAP_PROP_FPS))
@@ -29,31 +38,41 @@ def get_video_info(video_path):
     return video, fps, duration
 
 
-def transcribe_block(video_path, start_time, end_time, whisper_model="whisper-large-v3-turbo"):
-    # Create a unique temporary file
+def transcribe_segments(video_path, whisper_model="whisper-large-v3-turbo"):
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_audio:
         tmp_audio_path = tmp_audio.name
 
-    import subprocess
     subprocess.run([
         "ffmpeg",
         "-i", video_path,
-        "-ss", str(start_time),
-        "-to", str(end_time),
         "-vn",
+        "-ar", "16000",
+        "-ac", "1",
+        "-f", "wav",
         "-y",
         tmp_audio_path
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
-    # Open the extracted audio and send to Groq for transcription
     with open(tmp_audio_path, "rb") as f:
         transcription = client.audio.transcriptions.create(
             file=f,
-            model=whisper_model
+            model=whisper_model,
+            response_format="verbose_json",
+            timestamp_granularities=["segment"]
         )
 
     os.remove(tmp_audio_path)
-    return transcription.text.strip()
+    segs = getattr(transcription, "segments", None)
+    if segs is None:
+        raise ValueError("No segments returned. Check model or response_format parameters.")
+
+    segments = []
+    for s in segs:
+        start = getattr(s, "start", None) if hasattr(s, "start") else s.get("start")
+        end = getattr(s, "end", None) if hasattr(s, "end") else s.get("end")
+        text = getattr(s, "text", None) if hasattr(s, "text") else s.get("text")
+        segments.append({"start": float(start), "end": float(end), "text": text})
+    return segments
 
 
 def summarize_text_llama(text, language="auto-detect", size="short", persona="Expert", extra_prompt="", model="openai/gpt-oss-120b"):
@@ -61,17 +80,16 @@ def summarize_text_llama(text, language="auto-detect", size="short", persona="Ex
         return "[No speech detected in this block]"
 
     system_prompt = f"""
-    You are a video content summary generator.
-    Summarize the following text clearly and in detail, taking into account the scene, maintaining context, and highlighting important nuances.
-    Generate only the summary, without any extra information.
+You are a video content summarizer.
+Summarize the text clearly and contextually, keeping key ideas and transitions.
+Generate only the summary — no metadata or filler.
 
-    {extra_prompt}
+{extra_prompt}
 
-    **Instructions**:
-    - Personality: {persona}
-    - Language: {language}
-    - Summary length: {size}
-    """
+Personality: {persona}
+Language: {language}
+Summary length: {size}
+"""
 
     chat_completion = client.chat.completions.create(
         messages=[
@@ -104,47 +122,85 @@ def describe_frame(video, fps, start_time, end_time):
     response = client_gemini.models.generate_content(
         model='gemini-2.0-flash-lite',
         contents=[
-            types.Part.from_bytes(
-                data=image_bytes,
-                mime_type='image/jpeg',
-            ),
+            types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'),
             'Describe this image in one line.'
         ]
     )
-
     return response.text
 
 
-def create_blocks(video_path, block_duration):
+def create_blocks_smart(video_path, block_duration):
     video, fps, duration = get_video_info(video_path)
+    all_segments = transcribe_segments(video_path)
+
     blocks = []
-    num_blocks = int(duration // block_duration) + 1
+    current_block = []
+    current_start = None
+    block_time = 0.0
+    prev_summary = ""
 
-    for i in range(num_blocks):
-        start_time = i * block_duration
-        end_time = min((i + 1) * block_duration, duration)
-        print(f"\n🔹 Processing block {i+1}/{num_blocks}: {start_time:.1f}s - {end_time:.1f}s")
+    for seg in all_segments:
+        if not current_block:
+            current_start = seg["start"]
+            block_time = 0.0
 
-        # Transcription
-        block_text = transcribe_block(video_path, start_time, end_time)
-        print(f"🔊 Block {i+1} transcription:")
-        print(block_text if block_text else "[No speech]")
+        seg_dur = seg["end"] - seg["start"]
+        if block_time + seg_dur > block_duration and current_block:
+            block_end = current_block[-1]["end"]
+            block_text = " ".join([s["text"].strip() for s in current_block])
+            frame_description = describe_frame(video, fps, current_start, block_end)
 
-        # Frame description
-        frame_description = describe_frame(video, fps, start_time, end_time)
-        print(f"🖼️ Block {i+1} frame description:")
-        print(frame_description)
+            summary_input = f"""
+Previous summary (context): {prev_summary}
+Current block transcription: {block_text}
+Visual description: {frame_description}
+"""
+            summary = summarize_text_llama(summary_input)
+            prev_summary = summary
 
-        # Summary
-        summary = summarize_text_llama(
-            f"Transcription: {block_text}\nVisual description: {frame_description}"
-        )
-        print(f"📝 Block {i+1} summary:")
-        print(summary)
+            print(f"\n🔹 Block {len(blocks)+1}: {format_timestamp(current_start)} → {format_timestamp(block_end)}")
+            for s in current_block:
+                print(f"   [{format_timestamp(s['start'])} → {format_timestamp(s['end'])}] {s['text'].strip()}")
+            print(f"🖼️ Frame: {frame_description}")
+            print(f"📝 Summary: {summary}")
+
+            blocks.append({
+                "start_time": current_start,
+                "end_time": block_end,
+                "transcription": block_text,
+                "audio_summary": summary,
+                "frame_description": frame_description
+            })
+
+            current_block = [seg]
+            current_start = seg["start"]
+            block_time = seg["end"] - seg["start"]
+        else:
+            current_block.append(seg)
+            block_time = seg["end"] - current_start
+
+    if current_block:
+        block_end = current_block[-1]["end"]
+        block_text = " ".join([s["text"].strip() for s in current_block])
+        frame_description = describe_frame(video, fps, current_start, block_end)
+
+        summary_input = f"""
+Previous summary (context): {prev_summary}
+Current block transcription: {block_text}
+Visual description: {frame_description}
+"""
+        summary = summarize_text_llama(summary_input)
+        prev_summary = summary
+
+        print(f"\n🔹 Block {len(blocks)+1}: {format_timestamp(current_start)} → {format_timestamp(block_end)}")
+        for s in current_block:
+            print(f"   [{format_timestamp(s['start'])} → {format_timestamp(s['end'])}] {s['text'].strip()}")
+        print(f"🖼️ Frame: {frame_description}")
+        print(f"📝 Summary: {summary}")
 
         blocks.append({
-            "start_time": start_time,
-            "end_time": end_time,
+            "start_time": current_start,
+            "end_time": block_end,
             "transcription": block_text,
             "audio_summary": summary,
             "frame_description": frame_description
@@ -157,46 +213,40 @@ def create_blocks(video_path, block_duration):
 def final_video_summary(blocks, language, persona, size, extra_prompts):
     combined_texts = []
     for i, block in enumerate(blocks):
-        text = f"Block {i+1} ({block['start_time']:.1f}s-{block['end_time']:.1f}s):\n" \
+        text = f"Block {i+1} ({format_timestamp(block['start_time'])} → {format_timestamp(block['end_time'])}):\n" \
                f"Audio summary: {block['audio_summary']}\n" \
                f"Frame description: {block['frame_description']}\n"
         combined_texts.append(text)
 
     full_text = "\n".join(combined_texts)
-    final_summary = summarize_text_llama(
+    return summarize_text_llama(
         full_text,
         language=language,
         size="medium",
         persona=persona,
         extra_prompt=extra_prompts,
     )
-    return final_summary
 
 
 if __name__ == "__main__":
     from utils.download_url import download
 
-    VIDEO_PATH = ""
-    
-    # Verifica se é URL ou arquivo local
-    if VIDEO_PATH.startswith("http://") or VIDEO_PATH.startswith("https://"):
+    VIDEO_PATH = "downloads/test2.mp4"
+
+    if VIDEO_PATH.startswith(("http://", "https://")):
         VIDEO_PATH = download(VIDEO_PATH)
 
-
-
-    BLOCK_DURATION = 30  # seconds per block
-
+    BLOCK_DURATION = 30
     LANGUAGE = "portuguese"
-    SIZE = "large"  # options: short, medium, large
+    SIZE = "large"
     PERSONA = "Expert"
-    EXTRA_PROMPTS = "Faça o resumo em topicos pontos chaves"
+    EXTRA_PROMPTS = "Make the summary in key bullet points."
 
     start_total = time.time()
-
-    blocks = create_blocks(VIDEO_PATH, BLOCK_DURATION)
+    blocks = create_blocks_smart(VIDEO_PATH, BLOCK_DURATION)
 
     print("\n=== FINAL VIDEO SUMMARY ===")
-    summary = final_video_summary(blocks, LANGUAGE, SIZE, PERSONA, EXTRA_PROMPTS)
+    summary = final_video_summary(blocks, LANGUAGE, PERSONA, SIZE, EXTRA_PROMPTS)
     print(summary)
 
     end_total = time.time()
