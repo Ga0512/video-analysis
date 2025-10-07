@@ -129,39 +129,81 @@ def describe_frame(video, fps, start_time, end_time):
     )
     return response.text
 
+import re
+
+def split_into_sentences(text):
+    """
+    Divide o texto em frases completas.
+    Critério: começa com letra maiúscula e termina em ., ! ou ?
+    """
+    sentences = re.findall(r"[A-ZÀ-Ý][^.!?]*[.!?]", text)
+    return [s.strip() for s in sentences if s.strip()]
+
 
 def create_blocks_smart(video_path, block_duration):
     video, fps, duration = get_video_info(video_path)
     all_segments = transcribe_segments(video_path)
 
     blocks = []
-    current_block = []
-    current_start = None
-    block_time = 0.0
     prev_summary = ""
+    current_text = ""
+    current_start = None
+    current_time = 0.0
 
     for seg in all_segments:
-        if not current_block:
+        if current_start is None:
             current_start = seg["start"]
-            block_time = 0.0
+            current_time = 0.0
 
-        seg_dur = seg["end"] - seg["start"]
-        if block_time + seg_dur > block_duration and current_block:
-            block_end = current_block[-1]["end"]
-            block_text = " ".join([s["text"].strip() for s in current_block])
+        # adiciona o texto do segmento
+        segment_text = seg["text"].strip()
+        current_text += " " + segment_text
+        current_time = seg["end"] - current_start
+
+        # quando passa o limite de tempo, cria bloco respeitando frases completas
+        if current_time >= block_duration:
+            sentences = split_into_sentences(current_text)
+            if not sentences:
+                continue
+
+            # coleta apenas as frases que cabem dentro da duração
+            cumulative_time = 0.0
+            valid_sentences = []
+            remaining_text = ""
+            for s in sentences:
+                valid_sentences.append(s)
+                cumulative_time = block_duration * (len(" ".join(valid_sentences)) / len(current_text))
+                if cumulative_time >= block_duration:
+                    valid_sentences.pop()
+                    remaining_text = " ".join(sentences[len(valid_sentences):])
+                    break
+
+            block_text = " ".join(valid_sentences).strip()
+            if not block_text:
+                continue
+
+            block_end = seg["end"]
             frame_description = describe_frame(video, fps, current_start, block_end)
 
             summary_input = f"""
-Previous summary (context): {prev_summary}
-Current block transcription: {block_text}
-Visual description: {frame_description}
-"""
+            Previous summary (context): {prev_summary}
+            Current block transcription: {block_text}
+            Visual description: {frame_description}
+            """
             summary = summarize_text_llama(summary_input)
             prev_summary = summary
 
-            print(f"\n🔹 Block {len(blocks)+1}: {format_timestamp(current_start)} → {format_timestamp(block_end)}")
-            for s in current_block:
-                print(f"   [{format_timestamp(s['start'])} → {format_timestamp(s['end'])}] {s['text'].strip()}")
+            duracao = block_end - current_start
+            print(f"\n🔹 Block {len(blocks)+1}: {format_timestamp(current_start)} → {format_timestamp(block_end)} "
+                  f"(duração: {duracao:.2f}s)")
+
+            # imprime cada frase com timestamp aproximado
+            start_tmp = current_start
+            sentences_in_block = split_into_sentences(block_text)
+            for s in sentences_in_block:
+                print(f"   [{format_timestamp(start_tmp)}] {s}")
+                start_tmp += duracao / max(1, len(sentences_in_block))
+
             print(f"🖼️ Frame: {frame_description}")
             print(f"📝 Summary: {summary}")
 
@@ -173,36 +215,38 @@ Visual description: {frame_description}
                 "frame_description": frame_description
             })
 
-            current_block = [seg]
-            current_start = seg["start"]
-            block_time = seg["end"] - seg["start"]
-        else:
-            current_block.append(seg)
-            block_time = seg["end"] - current_start
+            # prepara o próximo bloco
+            current_text = remaining_text
+            current_start = seg["end"] - (len(remaining_text) / max(len(block_text), 1)) * block_duration
+            current_time = len(remaining_text) / max(len(block_text), 1) * block_duration
 
-    if current_block:
-        block_end = current_block[-1]["end"]
-        block_text = " ".join([s["text"].strip() for s in current_block])
+    # trata o último bloco restante
+    if current_text.strip():
+        block_end = duration
         frame_description = describe_frame(video, fps, current_start, block_end)
 
         summary_input = f"""
-Previous summary (context): {prev_summary}
-Current block transcription: {block_text}
-Visual description: {frame_description}
-"""
+        Previous summary (context): {prev_summary}
+        Current block transcription: {current_text.strip()}
+        Visual description: {frame_description}
+        """
         summary = summarize_text_llama(summary_input)
         prev_summary = summary
 
-        print(f"\n🔹 Block {len(blocks)+1}: {format_timestamp(current_start)} → {format_timestamp(block_end)}")
-        for s in current_block:
-            print(f"   [{format_timestamp(s['start'])} → {format_timestamp(s['end'])}] {s['text'].strip()}")
+        duracao = block_end - current_start
+        print(f"\n🔹 Block {len(blocks)+1}: {format_timestamp(current_start)} → {format_timestamp(block_end)} "
+              f"(duração: {duracao:.2f}s)")
+        sentences_in_block = split_into_sentences(current_text)
+        for s in sentences_in_block:
+            print(f"   [{format_timestamp(current_start)}] {s}")
+            current_start += duracao / max(1, len(sentences_in_block))
         print(f"🖼️ Frame: {frame_description}")
         print(f"📝 Summary: {summary}")
 
         blocks.append({
             "start_time": current_start,
             "end_time": block_end,
-            "transcription": block_text,
+            "transcription": current_text.strip(),
             "audio_summary": summary,
             "frame_description": frame_description
         })
