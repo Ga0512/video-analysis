@@ -10,6 +10,7 @@ from datetime import timedelta
 from groq import Groq
 from google import genai
 from google.genai import types
+import argparse
 
 load_dotenv()
 
@@ -228,19 +229,30 @@ def final_video_summary(blocks, language, persona, size, extra_prompts):
     )
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Video summarizer using Whisper, BLIP, and Ollama")
+    parser.add_argument("video_path", type=str, help="Path or URL to the video file")
+    parser.add_argument("--block_duration", type=int, default=30, help="Duration (seconds) of each block")
+    parser.add_argument("--language", type=str, default="portuguese", help="Language of the final summary")
+    parser.add_argument("--size", type=str, choices=["short", "medium", "large"], default="short", help="Summary size")
+    parser.add_argument("--persona", type=str, default="Expert", help="Persona style for the summary")
+    parser.add_argument("--extra_prompts", type=str, default="", help="Additional instructions for the summary")
+    return parser.parse_args()
+
 if __name__ == "__main__":
+    args = parse_args()
     from utils.download_url import download
 
-    VIDEO_PATH = "downloads/test2.mp4"
+    VIDEO_PATH = args.video_path
 
     if VIDEO_PATH.startswith(("http://", "https://")):
         VIDEO_PATH = download(VIDEO_PATH)
 
-    BLOCK_DURATION = 30
-    LANGUAGE = "portuguese"
-    SIZE = "large"
-    PERSONA = "Expert"
-    EXTRA_PROMPTS = "Make the summary in key bullet points."
+    BLOCK_DURATION = args.block_duration
+    LANGUAGE = args.language
+    SIZE = args.size
+    PERSONA = args.persona
+    EXTRA_PROMPTS = args.extra_prompts
 
     start_total = time.time()
     blocks = create_blocks_smart(VIDEO_PATH, BLOCK_DURATION)
